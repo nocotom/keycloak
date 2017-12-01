@@ -24,6 +24,7 @@ import org.keycloak.representations.AccessToken;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -37,8 +38,16 @@ public class KeycloakEvaluationContext extends DefaultEvaluationContext {
         this(new KeycloakIdentity(keycloakSession), keycloakSession);
     }
 
+    public KeycloakEvaluationContext(KeycloakSession keycloakSession, Map<String, Collection<String>> additionalAttributes) {
+        this(new KeycloakIdentity(keycloakSession), keycloakSession, additionalAttributes);
+    }
+
     public KeycloakEvaluationContext(KeycloakIdentity identity, KeycloakSession keycloakSession) {
-        super(identity, keycloakSession);
+        this(identity, keycloakSession, new HashMap<>());
+    }
+
+    public KeycloakEvaluationContext(KeycloakIdentity identity, KeycloakSession keycloakSession, Map<String, Collection<String>> additionalAttributes){
+        super(identity, keycloakSession, additionalAttributes);
         this.identity = identity;
     }
 

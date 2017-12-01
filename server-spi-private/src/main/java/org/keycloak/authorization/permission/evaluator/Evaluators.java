@@ -18,11 +18,13 @@
 
 package org.keycloak.authorization.permission.evaluator;
 
-import java.util.List;
-
 import org.keycloak.authorization.permission.ResourcePermission;
 import org.keycloak.authorization.policy.evaluation.DefaultPolicyEvaluator;
 import org.keycloak.authorization.policy.evaluation.EvaluationContext;
+import org.keycloak.authorization.policy.evaluation.EvaluationRequest;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * A factory for the different {@link PermissionEvaluator} implementations.
@@ -37,11 +39,19 @@ public final class Evaluators {
         this.policyEvaluator = policyEvaluator;
     }
 
-    public PermissionEvaluator from(List<ResourcePermission> permissions, EvaluationContext evaluationContext) {
-        return schedule(permissions, evaluationContext);
+    public PermissionEvaluator from(List<ResourcePermission> resourcePermissions, EvaluationContext evaluationContext) {
+        List<EvaluationRequest> evaluationRequests = resourcePermissions
+                .stream()
+                .map(resourcePermission -> new EvaluationRequest(evaluationContext, resourcePermission))
+                .collect(Collectors.toList());
+        return from(evaluationRequests);
     }
 
-    public PermissionEvaluator schedule(List<ResourcePermission> permissions, EvaluationContext evaluationContext) {
-        return new IterablePermissionEvaluator(permissions.iterator(), evaluationContext, this.policyEvaluator);
+    public PermissionEvaluator from(List<EvaluationRequest> evaluationRequests) {
+        return schedule(evaluationRequests);
+    }
+
+    public PermissionEvaluator schedule(List<EvaluationRequest> evaluationRequests) {
+        return new IterablePermissionEvaluator(evaluationRequests.iterator(), this.policyEvaluator);
     }
 }

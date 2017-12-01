@@ -37,12 +37,18 @@ import java.util.Map;
  */
 public class DefaultEvaluationContext implements EvaluationContext {
 
+    private final Map<String, Collection<String>> additionalAttributes;
     protected final KeycloakSession keycloakSession;
     protected final Identity identity;
 
     public DefaultEvaluationContext(Identity identity, KeycloakSession keycloakSession) {
+        this(identity, keycloakSession, new HashMap<>());
+    }
+
+    public DefaultEvaluationContext(Identity identity, KeycloakSession keycloakSession, Map<String, Collection<String>> additionalAttributes) {
         this.keycloakSession = keycloakSession;
         this.identity = identity;
+        this.additionalAttributes = additionalAttributes;
     }
 
     @Override
@@ -51,7 +57,7 @@ public class DefaultEvaluationContext implements EvaluationContext {
     }
 
     public Map<String, Collection<String>> getBaseAttributes() {
-        HashMap<String, Collection<String>> attributes = new HashMap<>();
+        HashMap<String, Collection<String>> attributes = new HashMap<>(additionalAttributes);
 
         attributes.put("kc.time.date_time", Arrays.asList(new SimpleDateFormat("MM/dd/yyyy hh:mm:ss").format(new Date())));
         attributes.put("kc.client.network.ip_address", Arrays.asList(this.keycloakSession.getContext().getConnection().getRemoteAddr()));

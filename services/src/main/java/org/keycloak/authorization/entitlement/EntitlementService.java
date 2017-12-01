@@ -17,15 +17,7 @@
  */
 package org.keycloak.authorization.entitlement;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -56,6 +48,7 @@ import org.keycloak.authorization.model.Resource;
 import org.keycloak.authorization.model.ResourceServer;
 import org.keycloak.authorization.model.Scope;
 import org.keycloak.authorization.permission.ResourcePermission;
+import org.keycloak.authorization.policy.evaluation.EvaluationRequest;
 import org.keycloak.authorization.policy.evaluation.Result;
 import org.keycloak.authorization.protection.permission.representation.PermissionRequest;
 import org.keycloak.authorization.store.ResourceStore;
@@ -125,7 +118,12 @@ public class EntitlementService {
             throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Client does not support permissions", Status.FORBIDDEN);
         }
 
-        return evaluate(null, Permissions.all(resourceServer, identity, authorization), identity, resourceServer);
+        KeycloakEvaluationContext evaluationContext = new KeycloakEvaluationContext(this.authorization.getKeycloakSession());
+        List<EvaluationRequest> evaluationRequests = Permissions.all(resourceServer, identity, authorization)
+                .stream().map(resourcePermission -> new EvaluationRequest(evaluationContext, resourcePermission))
+                .collect(Collectors.toList());
+
+        return evaluate(null, evaluationRequests, identity, resourceServer);
     }
 
     @Path("{resource_server_id}")
@@ -158,12 +156,12 @@ public class EntitlementService {
             throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "Client does not support permissions", Status.FORBIDDEN);
         }
 
-        return evaluate(entitlementRequest.getMetadata(), createPermissions(entitlementRequest, resourceServer, authorization), identity, resourceServer);
+        return evaluate(entitlementRequest.getMetadata(), createPolicyEvaluationRequests(entitlementRequest, resourceServer, authorization), identity, resourceServer);
     }
 
-    private Response evaluate(AuthorizationRequestMetadata metadata, List<ResourcePermission> permissions, KeycloakIdentity identity, ResourceServer resourceServer) {
+    private Response evaluate(AuthorizationRequestMetadata metadata, List<EvaluationRequest> evaluationRequests, KeycloakIdentity identity, ResourceServer resourceServer) {
         try {
-            List<Result> result = authorization.evaluators().from(permissions, new KeycloakEvaluationContext(this.authorization.getKeycloakSession())).evaluate();
+            List<Result> result = authorization.evaluators().from(evaluationRequests).evaluate();
             List<Permission> entitlements = Permissions.permits(result, metadata, authorization, resourceServer);
 
             if (!entitlements.isEmpty()) {
@@ -200,9 +198,9 @@ public class EntitlementService {
         return new TokenManager().encodeToken(this.authorization.getKeycloakSession(), realm, accessToken);
     }
 
-    private List<ResourcePermission> createPermissions(EntitlementRequest entitlementRequest, ResourceServer resourceServer, AuthorizationProvider authorization) {
+    private List<EvaluationRequest> createPolicyEvaluationRequests(EntitlementRequest entitlementRequest, ResourceServer resourceServer, AuthorizationProvider authorization) {
         StoreFactory storeFactory = authorization.getStoreFactory();
-        Map<String, Set<String>> permissionsToEvaluate = new LinkedHashMap<>();
+        Map<String, PermissionDefinition> permissionsToEvaluate = new LinkedHashMap<>();
         AuthorizationRequestMetadata metadata = entitlementRequest.getMetadata();
         Integer limit = metadata != null && metadata.getLimit() > 0 ? metadata.getLimit() : null;
 
@@ -233,7 +231,7 @@ public class EntitlementService {
             Set<String> scopeNames = requestedScopes.stream().map(ScopeRepresentation::getName).collect(Collectors.toSet());
 
             if (resource != null) {
-                permissionsToEvaluate.put(resource.getId(), scopeNames);
+                permissionsToEvaluate.put(resource.getId(), new PermissionDefinition(scopeNames, requestedResource.getContext()));
                 if (limit != null) {
                     limit--;
                 }
@@ -253,13 +251,13 @@ public class EntitlementService {
                 }).filter(s -> s != null).collect(Collectors.toList()), resourceServer.getId()));
 
                 for (Resource resource1 : resources) {
-                    permissionsToEvaluate.put(resource1.getId(), scopeNames);
+                    permissionsToEvaluate.put(resource1.getId(), new PermissionDefinition(scopeNames, requestedResource.getContext()));
                     if (limit != null) {
                         limit--;
                     }
                 }
 
-                permissionsToEvaluate.put("$KC_SCOPE_PERMISSION", scopeNames);
+                permissionsToEvaluate.put("$KC_SCOPE_PERMISSION", new PermissionDefinition(scopeNames, requestedResource.getContext()));
             }
         }
 
@@ -295,11 +293,11 @@ public class EntitlementService {
                             Resource resourcePermission = storeFactory.getResourceStore().findById(permission.getResourceSetId(), resourceServer.getId());
 
                             if (resourcePermission != null) {
-                                Set<String> scopes = permissionsToEvaluate.get(resourcePermission.getId());
+                                PermissionDefinition permissionDefinition = permissionsToEvaluate.get(resourcePermission.getId());
 
-                                if (scopes == null) {
-                                    scopes = new HashSet<>();
-                                    permissionsToEvaluate.put(resourcePermission.getId(), scopes);
+                                if (permissionDefinition == null) {
+                                    permissionDefinition = new PermissionDefinition(new HashSet<>(), new HashMap<>());
+                                    permissionsToEvaluate.put(resourcePermission.getId(), permissionDefinition);
                                     if (limit != null) {
                                         limit--;
                                     }
@@ -308,7 +306,7 @@ public class EntitlementService {
                                 Set<String> scopePermission = permission.getScopes();
 
                                 if (scopePermission != null) {
-                                    scopes.addAll(scopePermission);
+                                    permissionDefinition.getScopeNames().addAll(scopePermission);
                                 }
                             }
                         }
@@ -318,17 +316,40 @@ public class EntitlementService {
         }
 
         return permissionsToEvaluate.entrySet().stream()
-                .flatMap((Function<Map.Entry<String, Set<String>>, Stream<ResourcePermission>>) entry -> {
+                .flatMap((Function<Map.Entry<String, PermissionDefinition>, Stream<EvaluationRequest>>) entry -> {
                     String key = entry.getKey();
 
+                    Stream<ResourcePermission> resourcePermissionStream;
                     if ("$KC_SCOPE_PERMISSION".equals(key)) {
                         ScopeStore scopeStore = authorization.getStoreFactory().getScopeStore();
-                        List<Scope> scopes = entry.getValue().stream().map(scopeName -> scopeStore.findByName(scopeName, resourceServer.getId())).filter(scope -> Objects.nonNull(scope)).collect(Collectors.toList());
-                        return Arrays.asList(new ResourcePermission(null, scopes, resourceServer)).stream();
+                        List<Scope> scopes = entry.getValue().getScopeNames().stream().map(scopeName -> scopeStore.findByName(scopeName, resourceServer.getId())).filter(scope -> Objects.nonNull(scope)).collect(Collectors.toList());
+                        resourcePermissionStream = Stream.of(new ResourcePermission(null, scopes, resourceServer));
                     } else {
                         Resource entryResource = storeFactory.getResourceStore().findById(key, resourceServer.getId());
-                        return Permissions.createResourcePermissions(entryResource, entry.getValue(), authorization).stream();
+                        resourcePermissionStream = Permissions.createResourcePermissions(entryResource, entry.getValue().getScopeNames(), authorization).stream();
                     }
+
+                    KeycloakEvaluationContext evaluationContext = new KeycloakEvaluationContext(this.authorization.getKeycloakSession(), entry.getValue().getContext());
+                    return resourcePermissionStream.map(resourcePermission -> new EvaluationRequest(evaluationContext, resourcePermission));
                 }).collect(Collectors.toList());
+    }
+
+    private final class PermissionDefinition {
+        private final Set<String> scopeNames;
+
+        private final Map<String, Collection<String>> context;
+
+        public PermissionDefinition(Set<String> scopeNames, Map<String, Collection<String>> context) {
+            this.scopeNames = scopeNames;
+            this.context = context;
+        }
+
+        public Set<String> getScopeNames() {
+            return scopeNames;
+        }
+
+        public Map<String, Collection<String>> getContext() {
+            return context;
+        }
     }
 }

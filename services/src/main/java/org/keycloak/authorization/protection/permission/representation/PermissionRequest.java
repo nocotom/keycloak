@@ -20,9 +20,7 @@ package org.keycloak.authorization.protection.permission.representation;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
@@ -37,7 +35,10 @@ public class PermissionRequest {
 
     private final Set<String> scopes;
 
-    public PermissionRequest(String resourceSetId, String... scopes) {
+    @JsonProperty("context")
+    private final Map<String, Collection<String>> context;
+
+    public PermissionRequest(String resourceSetId, Map<String, Collection<String>> context, String... scopes) {
         this.resourceSetId = resourceSetId;
 
         if (scopes != null) {
@@ -46,6 +47,7 @@ public class PermissionRequest {
             this.scopes = new HashSet<>();
         }
 
+        this.context = context == null ? new HashMap<>() : context;
         this.resourceSetName = null;
     }
 
@@ -63,5 +65,9 @@ public class PermissionRequest {
 
     public Set<String> getScopes() {
         return this.scopes;
+    }
+
+    public Map<String, Collection<String>> getContext() {
+        return context;
     }
 }

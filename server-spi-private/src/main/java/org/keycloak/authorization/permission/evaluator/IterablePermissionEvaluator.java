@@ -22,32 +22,27 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.keycloak.authorization.Decision;
-import org.keycloak.authorization.permission.ResourcePermission;
-import org.keycloak.authorization.policy.evaluation.DecisionResultCollector;
-import org.keycloak.authorization.policy.evaluation.EvaluationContext;
-import org.keycloak.authorization.policy.evaluation.PolicyEvaluator;
-import org.keycloak.authorization.policy.evaluation.Result;
+import org.keycloak.authorization.policy.evaluation.*;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
 class IterablePermissionEvaluator implements PermissionEvaluator {
 
-    private final Iterator<ResourcePermission> permissions;
-    private final EvaluationContext executionContext;
+    private final Iterator<EvaluationRequest> evaluationRequests;
     private final PolicyEvaluator policyEvaluator;
 
-    IterablePermissionEvaluator(Iterator<ResourcePermission> permissions, EvaluationContext executionContext, PolicyEvaluator policyEvaluator) {
-        this.permissions = permissions;
-        this.executionContext = executionContext;
+    IterablePermissionEvaluator(Iterator<EvaluationRequest> evaluationRequests, PolicyEvaluator policyEvaluator) {
+        this.evaluationRequests = evaluationRequests;
         this.policyEvaluator = policyEvaluator;
     }
 
     @Override
     public void evaluate(Decision decision) {
         try {
-            while (this.permissions.hasNext()) {
-                this.policyEvaluator.evaluate(this.permissions.next(), this.executionContext, decision);
+            while (this.evaluationRequests.hasNext()) {
+                EvaluationRequest evaluationRequest = this.evaluationRequests.next();
+                this.policyEvaluator.evaluate(evaluationRequest.getResourcePermission(), evaluationRequest.getEvaluationContext(), decision);
             }
             decision.onComplete();
         } catch (Throwable cause) {
